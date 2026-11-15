@@ -21,6 +21,7 @@ CI and served by [pkg.pr.new](https://pkg.pr.new) (never npm): a mind's config r
 | [`whatsapp-calls/`](whatsapp-calls)         | none: run with `iterate provide`           | WhatsApp voice calls both ways, carried to the mind's voice app: `itx.whatsappCalls.call(…)` rings a person, and a known caller is picked up.                                    |
 | [`phone-calls/`](phone-calls)               | none: run with `iterate provide`           | Real phone calls both ways on an Andrews & Arnold VoIP number (a SIP phone in Go), carried to the mind's voice app: `itx.phoneCalls.call(…)`.                                    |
 | [`herdr/`](herdr)                           | none: a Herdr plugin, or `iterate provide` | Your Herdr as `itx.jonas.herdr`: one `call(method, params)` for Herdr's whole socket API, and its events on a stream (news durable, focus ephemeral).                            |
+| [`imessage/`](imessage)                     | none: run with `iterate provide`           | iMessage on a Mac as `itx.imessage`: `send(to, text)` to listed people only, and each new message from a listed person as an event; no history.                                  |
 | [`jmap/`](jmap)                             | `iterate-jmap`                             | The mind's own Fastmail mailbox over JMAP, called with plain `fetch`: send (filed in Sent), search, threads, Masked Email. The package is a card and a status page.              |
 | [`telegram/`](telegram)                     | `iterate-telegram`                         | A Telegram bot with its own Connect Telegram page: private chats and groups, each handed to an agent; invite links to let people in.                                             |
 | [`chatgpt/`](chatgpt)                       | `iterate-chatgpt`                          | Bring your own ChatGPT: a Connect ChatGPT page, and model requests paid by the subscription instead of an API key.                                                               |
@@ -49,8 +50,8 @@ mind's root). How an integration reaches a mind depends on what it is:
   waits for the platform to publish. Each recipe gives the values to put in its first block, then what
   to do next (a secret, a webhook, a page). Writing and publishing a package of your own:
   [`adding-an-integration.md`](adding-an-integration.md).
-- **Lent from your own computer** (WhatsApp, WhatsApp calls, phone calls, Amazon, Herdr, ChatGPT
-  desktop: "run with `iterate provide`"): one command lends it to the mind as `itx.<name>`. Each
+- **Lent from your own computer** (WhatsApp, WhatsApp calls, phone calls, Amazon, Herdr, iMessage,
+  ChatGPT desktop: "run with `iterate provide`"): one command lends it to the mind as `itx.<name>`. Each
   recipe says what to run and has a sample call. A lend registers no card: the mind lists it while
   the bridge is connected, by the description the bridge gives it.
 - **A sign-in and a file** (Yoto; Monzo's API beside its package): the mind signs in to the service
