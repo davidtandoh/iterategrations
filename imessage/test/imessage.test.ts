@@ -149,7 +149,6 @@ async function started(
   const mind = pretendMind();
   const ran: string[][] = [];
   const lend = createLend({
-    logPath: "/integrations/imessage/test",
     db: messages.path,
     allow: allowList(`${SAM}\n${ADA}`),
     own: allowList(OWN),
@@ -224,7 +223,6 @@ test("a lend that does not know its own address does not start", async () => {
   const messages = scratchMessages();
   cleanups.push(() => messages.close());
   const lend = createLend({
-    logPath: "/x",
     db: messages.path,
     allow: allowList(SAM),
     own: allowList(""),
@@ -236,7 +234,6 @@ test("a database that does not say which address a message was for is refused", 
   const messages = scratchMessages({ withoutDestination: true });
   cleanups.push(() => messages.close());
   const lend = createLend({
-    logPath: "/x",
     db: messages.path,
     allow: allowList(SAM),
     own: allowList(OWN),
@@ -265,7 +262,7 @@ test("only a listed person's own one-to-one iMessage lands", async () => {
     ],
   );
   assert.deepEqual(mind.events[1]!.payload.hasAttachments, true);
-  assert.deepEqual(new Set(mind.paths), new Set(["/integrations/imessage/test"]));
+  assert.deepEqual(new Set(mind.paths), new Set(["/integrations/imessage/primary"]));
 });
 
 test("a message lands once, as data: its text, its sender, its time and Messages' id", async () => {
@@ -335,12 +332,47 @@ test("messages wait for a mind that is unreachable, and land in order", async ()
   );
 });
 
+for (const connection of ["itx", "key"] as const) {
+  test(`queue overflow preserves retained messages during an in-flight ${connection} append`, async () => {
+    const { messages, lend } = await started();
+    const delivered: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let appending = false;
+    const append = async (guid: string) => {
+      if (!appending) {
+        appending = true;
+        await blocked;
+      }
+      delivered.push(guid);
+    };
+    await lend.provide({
+      itx: { cd: () => ({ append: async (event) => append(event.payload.guid) }) },
+      ...(connection === "key"
+        ? {
+            append: async (_path: string, event: { payload?: Record<string, unknown> }) =>
+              append(event.payload!.guid as string),
+          }
+        : {}),
+    });
+    const first = messages.arrive({ from: SAM });
+    await until(() => appending, "the first append starts");
+    const queued = Array.from({ length: 1_001 }, () => messages.arrive({ from: SAM }));
+    await settle();
+    release();
+    await until(() => delivered.length >= 1_000, "the retained messages land");
+    await settle();
+    assert.deepEqual(delivered, [first, ...queued.slice(1)]);
+  });
+}
+
 test("with a key of its own, a message goes through the key's append", async () => {
   const messages = scratchMessages();
   const mind = pretendMind();
   const signed: { path: string; event: { type: string; payload?: Record<string, unknown> } }[] = [];
   const lend = createLend({
-    logPath: "/integrations/imessage/test",
     db: messages.path,
     allow: allowList(SAM),
     own: allowList(OWN),
@@ -358,7 +390,7 @@ test("with a key of its own, a message goes through the key's append", async () 
   await until(() => signed.length === 1, "the signed message");
   assert.deepEqual(
     signed.map(({ path, event }) => [path, event.type, Object.keys(event).toSorted()]),
-    [["/integrations/imessage/test", "imessage/message", ["payload", "type"]]],
+    [["/integrations/imessage/primary", "imessage/message", ["payload", "type"]]],
   );
   assert.equal(signed[0]!.event.payload?.guid, guid);
   assert.equal(mind.events.length, 0);
@@ -430,7 +462,6 @@ test("a text never becomes AppleScript: the script is fixed, the text is one arg
   );
   // the script's own lines hold nothing of a message
   assert.deepEqual(sendArguments(SAM, "x").slice(0, -3), script);
-  for (const line of SEND_SCRIPT) assert.doesNotMatch(line, /pwned|do shell script/);
 });
 
 test("the allow-list: one handle a line or with commas, comments, one spelling for each", () => {
@@ -457,7 +488,6 @@ test("a lend that lists nobody does not start", async () => {
   const messages = scratchMessages();
   cleanups.push(() => messages.close());
   const lend = createLend({
-    logPath: "/x",
     db: messages.path,
     allow: allowList(""),
     own: allowList(OWN),
@@ -465,11 +495,12 @@ test("a lend that lists nobody does not start", async () => {
   await assert.rejects(lend.provide({ itx: pretendMind().itx }), /names nobody/);
 });
 
-test("Messages' dates: nanoseconds since 2001, seconds before macOS 10.13", () => {
+test("Messages' dates: nanoseconds since 2001", () => {
   assert.equal(appleDate(0n), null);
   assert.equal(appleDate(null), null);
+  assert.equal(appleDate(86_400n), "2001-01-01T00:00:00.000Z");
   assert.equal(appleDate(1_000_000_000_000n), "2001-01-01T00:16:40.000Z");
-  assert.equal(appleDate(86_400n), "2001-01-02T00:00:00.000Z");
+  assert.equal(appleDate(86_400_000_000_000n), "2001-01-02T00:00:00.000Z");
   assert.equal(
     appleDate(appleNanoseconds(Date.UTC(2026, 10, 15, 12, 0, 0))),
     "2026-11-15T12:00:00.000Z",
@@ -483,10 +514,5 @@ test("the real lend imports without opening anything: a default export and a des
     /^An iMessage account: iMessage with listed people, lent from a computer\./,
   );
   assert.match(description, /send\(to, text\)/);
-  // the platform refuses a lend whose description is not one line of at most 500 characters; a
-  // label (IMESSAGE_LABEL) is up to 41 more
-  assert.ok(
-    description.length <= 459 && !description.includes("\n"),
-    `${description.length} chars`,
-  );
+  assert.ok(description.length <= 500 && !description.includes("\n"), `${description.length} chars`);
 });

@@ -24,8 +24,8 @@ it reaches the mind:
   (`account`), received by it. A new message from a listed person to another account on the same
   Mac is dropped. Without `IMESSAGE_ACCOUNT` the lend does not start.
 - **Read-only.** The database is opened read-only; nothing can be written through the connection.
-- **Each message is one event** on the mind's `/integrations/imessage/primary`
-  (`IMESSAGE_LOG_PATH`), `imessage/message`:
+- **Each message is one event** on the mind's `/integrations/imessage/primary`,
+  `imessage/message`:
 
   ```json
   {
@@ -74,8 +74,8 @@ later, and this repository.
    chmod 600 ~/.config/iterate-imessage/allow
    ```
 
-   `IMESSAGE_ALLOW_FILE` names the file. `IMESSAGE_ALLOW` takes the same handles with commas
-   between them. A handle is spelled as Messages shows it. An entry that is no handle stops the
+   `IMESSAGE_ALLOW_FILE` names the file and is the only source of listed people.
+   A handle is spelled as Messages shows it. An entry that is no handle stops the
    lend, and so does an empty list. The list is read once, at the start: restart the lend after a
    change. Never commit the list.
 
@@ -122,9 +122,6 @@ while true; do iterate provide imessage/src/imessage.ts --mind <your mind> --key
 | --------------------- | ------------------------------------------------------------------------------------ | -------------------------------- |
 | `IMESSAGE_ACCOUNT`    | Required. The agent's own address or addresses: only messages written to them count. | none: the lend does not start    |
 | `IMESSAGE_ALLOW_FILE` | The file of listed handles, one a line.                                              | none                             |
-| `IMESSAGE_ALLOW`      | Listed handles with commas between them (added to the file's).                       | none                             |
-| `IMESSAGE_LOG_PATH`   | The stream messages land on. With a key, it must be under `--paths`.                 | `/integrations/imessage/primary` |
-| `IMESSAGE_LABEL`      | Whose account this is, in the description a model reads (at most 60 characters).     | `An iMessage account`            |
 | `IMESSAGE_DB`         | The Messages database.                                                               | `~/Library/Messages/chat.db`     |
 
 ### On the Integrations page
@@ -133,7 +130,7 @@ A bridge registers no card on the Integrations page: when it stops, nothing woul
 away. While it is connected, the mind lists the lend itself under the heading "Lent by a
 computer": the card's title is `itx.imessage`, and its description is the lend's own, cut to its
 first sentence and to 200 characters. The rule leaves the list when the program stops. The
-description begins `<IMESSAGE_LABEL>: iMessage with listed people, lent from a computer.`
+description begins `An iMessage account: iMessage with listed people, lent from a computer.`
 
 Last, before you tell the person it is done, check that it is lent:
 
