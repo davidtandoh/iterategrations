@@ -24,6 +24,9 @@ import type { IMessageEvent, Itx } from "../src/imessage.ts";
 const SAM = "+447700900123";
 const ADA = "ada@example.com";
 const STRANGER = "+447700900999";
+/** The address of the agent's own account, and the owner's personal one on the same Mac. */
+const OWN = "agent@example.com";
+const PERSONAL = "owner@example.org";
 
 type Message = {
   from: string;
@@ -36,10 +39,14 @@ type Message = {
   itemType?: number;
   associated?: number;
   attachments?: number;
+  /** the address the message was written to (`destination_caller_id`); the agent's own by default */
+  to?: string | null;
+  /** the account that received it (`account`), as Messages writes it: `E:<email>` or `P:<phone>` */
+  account?: string | null;
 };
 
 /** A database shaped like chat.db: the columns the lend reads, and rows the test writes. */
-function scratchMessages(options: { wal?: boolean } = {}) {
+function scratchMessages(options: { wal?: boolean; withoutDestination?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "imessage-test-"));
   const path = join(dir, "chat.db");
   const db = new DatabaseSync(path);
@@ -50,7 +57,8 @@ function scratchMessages(options: { wal?: boolean } = {}) {
       ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, text TEXT,
       attributedBody BLOB, handle_id INTEGER DEFAULT 0, service TEXT, date INTEGER,
       is_from_me INTEGER DEFAULT 0, cache_roomnames TEXT, item_type INTEGER DEFAULT 0,
-      associated_message_type INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0
+      associated_message_type INTEGER DEFAULT 0, cache_has_attachments INTEGER DEFAULT 0,
+      account TEXT${options.withoutDestination ? "" : ", destination_caller_id TEXT"}
     );
   `);
   const handles = new Map<string, number | bigint>();
@@ -69,8 +77,9 @@ function scratchMessages(options: { wal?: boolean } = {}) {
       const guid = `guid-${++count}`;
       db.prepare(
         `INSERT INTO message (guid, text, attributedBody, handle_id, service, date, is_from_me,
-           cache_roomnames, item_type, associated_message_type, cache_has_attachments)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           cache_roomnames, item_type, associated_message_type, cache_has_attachments,
+           destination_caller_id, account)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         guid,
         message.text === undefined ? `text of ${guid}` : message.text,
@@ -83,6 +92,8 @@ function scratchMessages(options: { wal?: boolean } = {}) {
         message.itemType ?? 0,
         message.associated ?? 0,
         message.attachments ?? 0,
+        message.to === undefined ? OWN : message.to,
+        message.account === undefined ? `E:${OWN}` : message.account,
       );
       return guid;
     },
@@ -141,6 +152,7 @@ async function started(
     logPath: "/integrations/imessage/test",
     db: messages.path,
     allow: allowList(`${SAM}\n${ADA}`),
+    own: allowList(OWN),
     pollMs: 5,
     osascript: async (args) => void ran.push(args),
   });
@@ -185,6 +197,51 @@ test("history that syncs in after the start, with its old date, is dropped", asy
     mind.events.map((event) => event.payload.guid),
     [guid],
   );
+});
+
+test("a listed person's message to another address on this Mac is dropped", async () => {
+  const { messages, mind } = await started();
+  // the owner's personal account syncs into the same store: new rows, new dates, listed senders
+  messages.arrive({ from: SAM, text: "to the owner", to: PERSONAL, account: `E:${PERSONAL}` });
+  messages.arrive({ from: ADA, text: "to the owner's number", to: "+447700900555" });
+  messages.arrive({ from: SAM, text: "to no address at all", to: null });
+  messages.arrive({ from: SAM, text: "to nothing", to: "" });
+  messages.arrive({ from: SAM, text: "received by another account", account: `E:${PERSONAL}` });
+  messages.arrive({ from: SAM, text: "received by a number", account: "P:+447700900555" });
+  const plain = messages.arrive({ from: SAM, text: "to the agent" });
+  const cased = messages.arrive({ from: ADA, text: "any case", to: "Agent@Example.com" });
+  const bare = messages.arrive({ from: SAM, text: "no account written", account: null });
+  const unprefixed = messages.arrive({ from: SAM, text: "account without prefix", account: OWN });
+  await until(() => mind.events.length === 4, "the four messages to the agent");
+  await settle();
+  assert.deepEqual(
+    mind.events.map((event) => event.payload.guid),
+    [plain, cased, bare, unprefixed],
+  );
+});
+
+test("a lend that does not know its own address does not start", async () => {
+  const messages = scratchMessages();
+  cleanups.push(() => messages.close());
+  const lend = createLend({
+    logPath: "/x",
+    db: messages.path,
+    allow: allowList(SAM),
+    own: allowList(""),
+  });
+  await assert.rejects(lend.provide({ itx: pretendMind().itx }), /IMESSAGE_ACCOUNT/);
+});
+
+test("a database that does not say which address a message was for is refused", async () => {
+  const messages = scratchMessages({ withoutDestination: true });
+  cleanups.push(() => messages.close());
+  const lend = createLend({
+    logPath: "/x",
+    db: messages.path,
+    allow: allowList(SAM),
+    own: allowList(OWN),
+  });
+  await assert.rejects(lend.provide({ itx: pretendMind().itx }), /destination_caller_id/);
 });
 
 test("only a listed person's own one-to-one iMessage lands", async () => {
@@ -286,6 +343,7 @@ test("with a key of its own, a message goes through the key's append", async () 
     logPath: "/integrations/imessage/test",
     db: messages.path,
     allow: allowList(SAM),
+    own: allowList(OWN),
     pollMs: 5,
   });
   cleanups.push(() => {
@@ -398,7 +456,12 @@ test("the allow-list: one handle a line or with commas, comments, one spelling f
 test("a lend that lists nobody does not start", async () => {
   const messages = scratchMessages();
   cleanups.push(() => messages.close());
-  const lend = createLend({ logPath: "/x", db: messages.path, allow: allowList("") });
+  const lend = createLend({
+    logPath: "/x",
+    db: messages.path,
+    allow: allowList(""),
+    own: allowList(OWN),
+  });
   await assert.rejects(lend.provide({ itx: pretendMind().itx }), /names nobody/);
 });
 
@@ -421,7 +484,7 @@ test("the real lend imports without opening anything: a default export and a des
   );
   assert.match(description, /send\(to, text\)/);
   // the platform refuses a lend whose description is not one line of at most 500 characters; a
-  // label (IMESSAGE_ACCOUNT) is up to 41 more
+  // label (IMESSAGE_LABEL) is up to 41 more
   assert.ok(
     description.length <= 459 && !description.includes("\n"),
     `${description.length} chars`,

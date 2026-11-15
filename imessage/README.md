@@ -17,6 +17,12 @@ it reaches the mind:
 - **Only listed people.** The query names the listed senders, so no other person's row reaches the
   lend. A message counts when a listed person sent it, one to one, over iMessage. The account's own
   messages, group chats, tapbacks and SMS are dropped (an SMS names its sender without proof).
+- **Only the agent's own account.** Another account's messages can sync into the same Messages
+  store, such as the owner's personal one through iCloud. So the lend must be told its own
+  address (`IMESSAGE_ACCOUNT`), and a message counts only when it was written to that address
+  (`destination_caller_id` in the database) and, where the row names the receiving account
+  (`account`), received by it. A new message from a listed person to another account on the same
+  Mac is dropped. Without `IMESSAGE_ACCOUNT` the lend does not start.
 - **Read-only.** The database is opened read-only; nothing can be written through the connection.
 - **Each message is one event** on the mind's `/integrations/imessage/primary`
   (`IMESSAGE_LOG_PATH`), `imessage/message`:
@@ -73,13 +79,19 @@ later, and this repository.
    lend, and so does an empty list. The list is read once, at the start: restart the lend after a
    change. Never commit the list.
 
-3. **Grant Full Disk Access** to the program that runs the lend: System Settings → Privacy &
+3. **Name the agent's own address**: `IMESSAGE_ACCOUNT` is the address people write to the agent
+   at, as Messages shows it under Settings → iMessage ("You can be reached for messages at"): the
+   dedicated Apple ID's email, or its phone number with the country code. An account that is
+   reached at several addresses takes them all, with commas between them. Never put the owner's
+   personal address here.
+4. **Grant Full Disk Access** to the program that runs the lend: System Settings → Privacy &
    Security → Full Disk Access, then add the terminal app you start it from (or `node` itself, for
    a lend that `launchd` starts). Without it, macOS refuses to open `chat.db` and the lend says
    so.
-4. **Start the lend with a restricted key**, from this repository's folder:
+5. **Start the lend with a restricted key**, from this repository's folder:
 
    ```sh
+   IMESSAGE_ACCOUNT=agent@example.com \
    IMESSAGE_ALLOW_FILE=~/.config/iterate-imessage/allow \
      iterate provide imessage/src/imessage.ts --mind <your mind> \
      --key ~/.config/iterate-imessage/key --paths /integrations/imessage/
@@ -92,12 +104,12 @@ later, and this repository.
    A member removes the key on the mind's `/keys` page. Without `--key` and `--paths`, the lend
    uses your own sign-in and acts as you.
 
-5. **Allow Automation, once.** The first `send` makes macOS ask whether the program may control
+6. **Allow Automation, once.** The first `send` makes macOS ask whether the program may control
    Messages. Run the sample call above from the mind while you are at the Mac's screen, and press
    OK. Later, the permission is under System Settings → Privacy & Security → Automation. If the
    prompt was dismissed, `send` fails with "Not authorized to send Apple events": turn it on
    there.
-6. **Check the Integrations page**, as [below](#on-the-integrations-page).
+7. **Check the Integrations page**, as [below](#on-the-integrations-page).
 
 Stop with Ctrl-C. `iterate provide` reconnects by itself, but gives up after about five minutes
 without the mind. To ride that out, run it in a loop:
@@ -106,13 +118,14 @@ without the mind. To ride that out, run it in a loop:
 while true; do iterate provide imessage/src/imessage.ts --mind <your mind> --key … --paths …; sleep 15; done
 ```
 
-| Variable              | What it sets                                                                     | Default                          |
-| --------------------- | -------------------------------------------------------------------------------- | -------------------------------- |
-| `IMESSAGE_ALLOW_FILE` | The file of listed handles, one a line.                                          | none                             |
-| `IMESSAGE_ALLOW`      | Listed handles with commas between them (added to the file's).                   | none                             |
-| `IMESSAGE_LOG_PATH`   | The stream messages land on. With a key, it must be under `--paths`.             | `/integrations/imessage/primary` |
-| `IMESSAGE_ACCOUNT`    | Whose account this is, in the description a model reads (at most 60 characters). | `An iMessage account`            |
-| `IMESSAGE_DB`         | The Messages database.                                                           | `~/Library/Messages/chat.db`     |
+| Variable              | What it sets                                                                         | Default                          |
+| --------------------- | ------------------------------------------------------------------------------------ | -------------------------------- |
+| `IMESSAGE_ACCOUNT`    | Required. The agent's own address or addresses: only messages written to them count. | none: the lend does not start    |
+| `IMESSAGE_ALLOW_FILE` | The file of listed handles, one a line.                                              | none                             |
+| `IMESSAGE_ALLOW`      | Listed handles with commas between them (added to the file's).                       | none                             |
+| `IMESSAGE_LOG_PATH`   | The stream messages land on. With a key, it must be under `--paths`.                 | `/integrations/imessage/primary` |
+| `IMESSAGE_LABEL`      | Whose account this is, in the description a model reads (at most 60 characters).     | `An iMessage account`            |
+| `IMESSAGE_DB`         | The Messages database.                                                               | `~/Library/Messages/chat.db`     |
 
 ### On the Integrations page
 
@@ -120,7 +133,7 @@ A bridge registers no card on the Integrations page: when it stops, nothing woul
 away. While it is connected, the mind lists the lend itself under the heading "Lent by a
 computer": the card's title is `itx.imessage`, and its description is the lend's own, cut to its
 first sentence and to 200 characters. The rule leaves the list when the program stops. The
-description begins `<IMESSAGE_ACCOUNT>: iMessage with listed people, lent from a computer.`
+description begins `<IMESSAGE_LABEL>: iMessage with listed people, lent from a computer.`
 
 Last, before you tell the person it is done, check that it is lent:
 
@@ -157,6 +170,12 @@ delete the key file and the allow-list. The events it appended stay on
 - **Read-only, with one footnote.** For a database in write-ahead-log mode, as Messages' is,
   SQLite's read-only connection still uses the lock file beside it (`chat.db-shm`). It cannot
   change a table or a row.
+- **Nothing lands?** When a listed person's new message was for another address, the lend prints
+  how many it did not pass on. If that count grows while people write to the agent,
+  `IMESSAGE_ACCOUNT` is not the address Messages records: correct it and restart. A Messages
+  database with no `destination_caller_id` column is refused at the start.
+- **`send` and several accounts.** `send` uses the Mac's first iMessage account. Keep Messages
+  signed in to the agent's Apple ID alone, so that this is the agent's.
 - **The logs name nobody.** What the lend prints is counts and errors, never a handle or a text.
 - **The tests** (`vp test` in this folder) run over a scratch SQLite database with made-up rows and
   a pretend `osascript`. They never open the real Messages database and never send.
