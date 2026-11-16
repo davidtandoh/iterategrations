@@ -10,12 +10,12 @@ The Mac's Messages database (`~/Library/Messages/chat.db`) can hold more than th
 other people's conversations, and history that iCloud syncs in. The lend is narrow so that none of
 it reaches the mind:
 
-- **Only new messages.** When the lend starts, it notes the highest message row there is and the
+- **Only new messages.** On its first start, the lend notes the highest message row there is and the
   time. It only ever asks for rows above that row, written at or after that time. It reads,
   searches and exports no history. History that iCloud syncs in later is a new row with an old
-  date, so it is dropped.
-- **Only listed people.** The query names the listed senders, so no other person's row reaches the
-  lend. A message counts when a listed person sent it, one to one, over iMessage. The account's own
+  date, so it is dropped. For restart behavior, see [Keep it running](#keep-it-running).
+- **One-to-one messages only from listed people.** The query names the listed senders for
+  one-to-one messages. A message counts when a listed person sent it over iMessage. The account's own
   messages, tapbacks and SMS are dropped (an SMS names its sender without proof).
 - **Group chats only when listed.** A group chat is dropped unless the allow file lists it, on a
   line of its own form (`group:<chat identifier>`). A message in a listed group counts whoever in
@@ -28,7 +28,7 @@ it reaches the mind:
   (`account`), received by it. A new message from a listed person to another account on the same
   Mac is dropped. Without `IMESSAGE_ACCOUNT` the lend does not start.
 - **Read-only.** The database is opened read-only; nothing can be written through the connection.
-- **Each message is one event** on the mind's `/integrations/imessage/primary`,
+- **Messages land as events** on the mind's `/integrations/imessage/primary`,
   `imessage/message`:
 
   ```json
@@ -57,7 +57,7 @@ it reaches the mind:
   | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | `from`           | The sender's handle: a phone number with its country code, or an Apple ID email.                                                                         |
   | `text`           | The text, or `null` when the message has none that the lend can read.                                                                                    |
-  | `sentAt`         | The time of the message, ISO 8601.                                                                                                                       |
+  | `sentAt`         | The time of the message, ISO 8601, or `null` when the date is absent or nonpositive.                                                                     |
   | `guid`           | Messages' own id of the message.                                                                                                                         |
   | `hasAttachments` | Whether Messages marked the message as one with files.                                                                                                   |
   | `attachments`    | One entry a file: its `guid`, `name`, `type` (a MIME type) and `size` in bytes. `[]` when there is none. A value that Messages did not record is `null`. |
@@ -72,7 +72,7 @@ it reaches the mind:
   | Call                                    | What it does                                                                                                      | Refuses                                                                                    |
   | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
   | `itx.imessage.send(to, text)`           | Writes to a listed person, or to a listed group chat (`to` is the event's `group`). Answers `{ sent: true, to }`. | Anyone and any group that is not listed.                                                   |
-  | `itx.imessage.send(to, text, file)`     | Sends a file, then the text if there is one (`text` may be `""`). `file` is `{ url, name? }`.                     | A `file.url` that is not `https:` or `data:`; a file larger than 100 MB.                   |
+  | `itx.imessage.send(to, text, file)`     | Sends a file, then the text if there is one (`text` may be `""`). `file` is `{ url, name? }`.                     | A `file.url` that is not `https:` or `data:`; an empty file or one larger than 100 MiB.    |
   | `itx.imessage.downloadAttachment(guid)` | Answers the bytes of one received file, by the `guid` of its entry in `attachments`.                              | Every attachment of a message that this run of the lend did not deliver. It takes no path. |
 
   ```js
@@ -90,9 +90,13 @@ it reaches the mind:
     await itx.imessage.send("+447700900123", "The menu.", { url, name: "friday.pdf" });
   };
   async (itx, event) => {
-    const [file] = event.payload.attachments;
-    const data = await itx.imessage.downloadAttachment(file.guid);
-    await itx.files.get(`/imessage/${file.guid}`).put({ contentType: file.type, data });
+    for (const file of event.payload.attachments) {
+      const data = await itx.imessage.downloadAttachment(file.guid);
+      await itx.files.get(`/imessage/${file.guid}`).put({
+        contentType: file.type ?? "application/octet-stream",
+        data,
+      });
+    }
   };
   ```
 
@@ -299,7 +303,9 @@ first start. A restart then goes on after that row.
 | A message that arrived while the lend was stopped          | Delivered at the next start.                      |
 | A message read but not yet taken by the mind               | Delivered again at the next start.                |
 | History that iCloud syncs in, dated before the first start | Dropped: the date floor never moves.              |
-| The file is unreadable, or names another database          | The lend says so and begins from now.             |
+| The file is missing or unreadable                          | Begins from now.                                  |
+| The file is malformed                                      | Logs a notice and begins from now.                |
+| The saved row exceeds the database's highest row           | Begins from now.                                  |
 
 After a long stop, the next start delivers every listed message that arrived meanwhile (the
 newest 1,000). To begin from now instead, delete the state file before the start.
@@ -327,9 +333,7 @@ delete the key file and the allow-list. The events it appended stay on
 
 ## Good to know
 
-- **A restart begins again**, unless `IMESSAGE_STATE_FILE` is set
-  ([Keep it running](#keep-it-running)). Without it the start point is not kept: a message that
-  arrives while the lend is stopped is never delivered. In both cases a message sent before the
+- **Restarts** follow [the start-point rules](#keep-it-running). A message sent before the
   first start that reaches the Mac after it is never delivered. This is on purpose: the lend has
   no way to tell such a message from history.
 - **The mind away.** Messages that arrive while the mind is unreachable wait in memory, up to
@@ -340,17 +344,19 @@ delete the key file and the allow-list. The events it appended stay on
   key derived from `guid`.
 - **Received files.** The event names each file; the bytes stay on the Mac until the mind asks
   with `downloadAttachment(guid)`. The lend answers only for attachments of messages that this
-  run of it delivered (the newest 5,000), so after a restart the earlier ones are refused. It
-  reads the path from the database and then requires the real file to be inside
+  run of it delivered, retaining the 5,000 most recently discovered attachment GUIDs. After a
+  restart the earlier ones are refused. It refuses files larger than 100 MiB. It reads the path
+  from the database and requires the real file to be inside
   `~/Library/Messages/Attachments`. A file that Messages has not downloaded to the Mac yet is
   "not found": ask again later. `hasAttachments: true` with `attachments: []` means Messages had
   not written the attachment metadata yet. The text is delivered immediately. For two minutes
   after delivery, this run checks only those delivered messages for missing metadata. If the
   metadata appears, the lend appends one follow-up event with the same message `guid` and its
   attachment metadata, and makes the files downloadable. The follow-up has a separate
-  idempotency key. After two minutes, the lend silently stops checking that message. Discovery
+  idempotency key when appended without a restricted key, as described under **The mind away**.
+  After two minutes, the lend silently stops checking that message. Discovery
   is held in memory for at most 5,000 messages and does not survive a restart.
-- **Sent files.** The lend fetches the URL from the Mac, at most 100 MB, and follows a redirect
+- **Sent files.** The lend fetches the URL from the Mac, at most 100 MiB, and follows a redirect
   only to another `https:` URL. It writes the bytes to a file (mode 600) in a new folder (mode 700) under `IMESSAGE_SEND_DIR`, hands Messages the path, and deletes the folder five minutes
   later, when Messages has had time to read it. A failed send deletes it at once, and each start
   deletes what an earlier run left. The default folder is inside Messages' own, because Messages
