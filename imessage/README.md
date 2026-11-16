@@ -316,7 +316,7 @@ newest 1,000). To begin from now instead, delete the state file before the start
 
 The [bridge contract](../adding-an-integration.md#keep-the-integrations-page-true) describes
 how the mind lists live lends. This lend appears as `itx.imessage` under "Lent by a computer",
-with the description `An iMessage account: iMessage with listed people, lent from a computer.`
+with the exported `description` from [src/imessage.ts](src/imessage.ts).
 
 Last, before you tell the person it is done, check that it is lent:
 
