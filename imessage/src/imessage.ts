@@ -464,7 +464,7 @@ export function createLend(input: {
     const fileOfGuid = db.prepare("SELECT filename FROM attachment WHERE guid = ?");
     // A group chat's id as AppleScript takes it (`chat.guid`), by its identifier
     const chatOf = db.prepare(
-      "SELECT guid FROM chat WHERE chat_identifier = ? ORDER BY ROWID DESC LIMIT 1",
+      "SELECT guid, service_name AS service FROM chat WHERE chat_identifier = ? ORDER BY ROWID DESC LIMIT 1",
     );
     // How many were for another address, and no more than that number: an owner who set the
     // wrong IMESSAGE_ACCOUNT sees why nothing lands.
@@ -519,8 +519,14 @@ export function createLend(input: {
       /** The id of a group chat as Messages' AppleScript takes it, or undefined: no such chat,
        *  or one that is not an iMessage group under exactly this identifier. */
       chatId: (group: string): string | undefined => {
-        const guid = chatOf.get(group)?.guid;
-        return GROUP_ID.test(group) && guid === `iMessage;+;${group}` ? guid : undefined;
+        const chat = chatOf.get(group);
+        // Messages writes the id as `iMessage;+;<identifier>` or, on a newer macOS,
+        // `any;+;<identifier>`; an SMS group can carry the second too, so the service decides
+        return GROUP_ID.test(group) &&
+          chat?.service === "iMessage" &&
+          (chat.guid === `iMessage;+;${group}` || chat.guid === `any;+;${group}`)
+          ? chat.guid
+          : undefined;
       },
     };
   };
