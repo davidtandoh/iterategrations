@@ -514,5 +514,8 @@ test("the real lend imports without opening anything: a default export and a des
     /^An iMessage account: iMessage with listed people, lent from a computer\./,
   );
   assert.match(description, /send\(to, text\)/);
-  assert.ok(description.length <= 500 && !description.includes("\n"), `${description.length} chars`);
+  assert.ok(
+    description.length <= 500 && !description.includes("\n"),
+    `${description.length} chars`,
+  );
 });
