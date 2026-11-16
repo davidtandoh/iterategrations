@@ -129,8 +129,8 @@ later, and this repository.
    change. Never commit the list.
 
    To list a group chat, add a line `group:<chat identifier>`. The chat identifier is the name
-   Messages keeps for the group in its database. It has one of two forms: `chat` and a long
-   number, or 32 hex digits (`0123456789abcdef0123456789abcdef`) for a newer group. The agent's
+   Messages keeps for the group in its database. The lend accepts `chat` followed by 6–64
+   letters or digits, or 32 lowercase hex digits (`0123456789abcdef0123456789abcdef`). The agent's
    account must already be in the group. Look the identifier up on the Mac, from a terminal that has
    Full Disk Access (step 4):
 
@@ -360,19 +360,17 @@ delete the key file and the allow-list. The events it appended stay on
   is held in memory for at most 5,000 messages and does not survive a restart.
 - **Sent files.** The lend fetches the URL from the Mac, at most 100 MiB, and follows a redirect
   only to another `https:` URL. It writes the bytes to a file (mode 600) in a new folder (mode 700) under `IMESSAGE_SEND_DIR`, hands Messages the path, and deletes the folder five minutes
-  later, when Messages has had time to read it. A failed send deletes it at once, and each start
-  deletes what an earlier run left. The default folder is inside Messages' own, because Messages
+  later, when Messages has had time to read it. If Messages rejects the file send, the lend deletes
+  the folder at once. If the file send succeeds but the following text fails, the folder keeps
+  its five-minute cleanup timer. Each start deletes what an earlier run left.
+  The default folder is inside Messages' own, because Messages
   may not read every folder of the disk. The name is `file.name` or the URL's last part, with
   nothing of a path kept.
 - **Text.** Newer macOS keeps some texts only in an archived form (`attributedBody`): the lend
   reads the text out of the common shape, and answers `text: null` for one it cannot read. It
   does not notice edits or unsent messages.
-- **Group chats.** A group that is not listed is dropped, also when a listed person writes in it.
-  `send` to a listed group needs the group to exist in Messages on the Mac: the lend reads the
-  group's id from the database and refuses when there is none. Only iMessage groups count; a
-  group with an SMS member is not one.
-- **`send` is iMessage only.** The fixed script uses the Mac's iMessage account. A listed handle
-  that is not on iMessage fails in Messages, and it is not sent as an SMS. `send` answers when
+- **`send` is iMessage only.** For a person, the fixed script uses the Mac's iMessage account.
+  A listed handle that is not on iMessage fails in Messages, and it is not sent as an SMS. `send` answers when
   Messages took the message, not when it was delivered.
 - **Read-only, with one footnote.** For a database in write-ahead-log mode, as Messages' is,
   SQLite's read-only connection still uses the lock file beside it (`chat.db-shm`). It cannot
@@ -381,8 +379,9 @@ delete the key file and the allow-list. The events it appended stay on
   how many it did not pass on. If that count grows while people write to the agent,
   `IMESSAGE_ACCOUNT` is not the address Messages records: correct it and restart. A Messages
   database with no `destination_caller_id` column is refused at the start.
-- **`send` and several accounts.** `send` uses the Mac's first iMessage account. Keep Messages
-  signed in to the agent's Apple ID alone, so that this is the agent's.
+- **`send` and several accounts.** Sends to a person use the Mac's first iMessage account.
+  Group sends use the existing chat in Messages. Keep Messages signed in to the agent's Apple ID
+  alone so that outgoing messages use that account.
 - **Logs.** Queue and account-filter notices contain counts. Errors include text returned by
   SQLite, the mind or `osascript`; treat that output as potentially private.
 - **The tests** (`vp test` in this folder) run over a scratch SQLite database with made-up rows and
