@@ -64,13 +64,17 @@ export function handleOf(value: unknown): string | undefined {
   return /^\+\d{6,15}$/.test(phone) ? phone : undefined;
 }
 
+/** The two forms Messages gives a group chat's identifier: `chat` and letters or digits, and,
+ *  for a newer group, 32 lowercase hex digits. */
+const GROUP_ID = /^(?:chat[A-Za-z0-9]{6,64}|[0-9a-f]{32})$/;
+
 /** A group chat's identifier as Messages keeps it (`chat.chat_identifier`, and
- *  `message.cache_roomnames` on each of its messages): `chat` and letters or digits. Undefined
+ *  `message.cache_roomnames` on each of its messages), in either of its two forms. Undefined
  *  for anything else. */
 export function groupOf(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const id = value.trim();
-  return /^chat[A-Za-z0-9]{6,64}$/.test(id) ? id : undefined;
+  return GROUP_ID.test(id) ? id : undefined;
 }
 
 /** The entries of an allow file: one a line or comma-separated, `#` starts a comment. */
@@ -512,14 +516,11 @@ export function createLend(input: {
         const filename = fileOfGuid.get(guid)?.filename;
         return typeof filename === "string" && filename ? filename : null;
       },
-      /** The id of a group chat as Messages' AppleScript takes it, or undefined: no such chat. */
+      /** The id of a group chat as Messages' AppleScript takes it, or undefined: no such chat,
+       *  or one that is not an iMessage group under exactly this identifier. */
       chatId: (group: string): string | undefined => {
         const guid = chatOf.get(group)?.guid;
-        return typeof guid === "string" &&
-          /^iMessage;\+;chat[A-Za-z0-9]+$/.test(guid) &&
-          guid.endsWith(`;${group}`)
-          ? guid
-          : undefined;
+        return GROUP_ID.test(group) && guid === `iMessage;+;${group}` ? guid : undefined;
       },
     };
   };
