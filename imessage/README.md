@@ -106,8 +106,15 @@ it reaches the mind:
 
 ## Set it up
 
-These steps are the owner's, on the Mac. You need macOS with Messages signed in, Node 22.18 or
-later, and this repository.
+These steps are the owner's, on the Mac, as the owner's own macOS user. You need macOS with
+Messages signed in, Node 22.18 or later, the Xcode Command Line Tools (`xcode-select --install`,
+for the C compiler) and this repository.
+
+The lend reads Messages' database, which macOS opens only to a program with **Full Disk Access**.
+That grant goes to one app, `iterate-imessage.app`, which runs this lend and nothing else, in the
+background. Never grant it to a terminal, a shell or `node`: everything they start, such as
+scripts and coding agents, could then read every protected file on the Mac. See
+[how the launcher keeps the grant to itself](#how-the-launcher-keeps-full-disk-access-to-itself).
 
 1. **Install the `iterate` CLI and sign in**: `npm install -g iterate@latest`, then
    `iterate login <your mind>` (its address, such as `example.com`).
@@ -123,21 +130,23 @@ later, and this repository.
    chmod 600 ~/.config/iterate-imessage/allow
    ```
 
-   `IMESSAGE_ALLOW_FILE` names the file and is the only source of listed people and group chats.
-   A handle is spelled as Messages shows it. An entry that is neither a handle nor a group line
-   stops the lend, and so does an empty list. The list is read once, at the start: restart the lend after a
+   This file is the only source of listed people and group chats. A handle is spelled as Messages
+   shows it. An entry that is neither a handle nor a group line stops the lend, and so does an
+   empty list. The list is read once, at the start: [restart the lend](#keep-it-running) after a
    change. Never commit the list.
 
    To list a group chat, add a line `group:<chat identifier>`. The chat identifier is the name
-   Messages keeps for the group in its database. The lend accepts `chat` followed by 6–64
-   letters or digits, or 32 lowercase hex digits (`0123456789abcdef0123456789abcdef`). The agent's
-   account must already be in the group. Look the identifier up on the Mac, from a terminal that has
-   Full Disk Access (step 4):
+   Messages keeps for the group. The lend accepts `chat` followed by 6–64 letters or digits, or 32
+   lowercase hex digits (`0123456789abcdef0123456789abcdef`). The agent's account must already be
+   in the group. Ask Messages itself for the identifiers, which needs no Full Disk Access:
 
    ```sh
-   sqlite3 -readonly ~/Library/Messages/chat.db \
-     "SELECT chat_identifier, display_name FROM chat WHERE style = 43"
+   osascript -e 'tell application "Messages" to get {id, name} of every chat'
    ```
+
+   A group chat's `id` reads `iMessage;+;<chat identifier>` or `any;+;<chat identifier>`: list the
+   part after `;+;`. The first run makes macOS ask whether the terminal may control Messages.
+   Afterwards, turn that off under System Settings → Privacy & Security → Automation.
 
    ```text
    group:chat123456789012345678             # the Friday dinner group
@@ -147,157 +156,167 @@ later, and this repository.
    A group line lists the whole group: every member's messages in it reach the mind, also those
    of a member who is not listed as a person. A chat identifier without `group:` is refused.
 
-3. **Name the agent's own address**: `IMESSAGE_ACCOUNT` is the address people write to the agent
-   at, as Messages shows it under Settings → iMessage ("You can be reached for messages at"): the
-   dedicated Apple ID's email, or its phone number with the country code. An account that is
-   reached at several addresses takes them all, with commas between them. Never put the owner's
-   personal address here.
-4. **Grant Full Disk Access** to the program that runs the lend: System Settings → Privacy &
-   Security → Full Disk Access, then add the terminal app you start it from (or `node` itself, for
-   a lend that `launchd` starts). Without it, macOS refuses to open `chat.db` and the lend says
-   so.
-5. **Start the lend with a restricted key**, from this repository's folder:
+3. **Write the launcher's configuration**, `~/.config/iterate-imessage/launcher.conf`:
 
    ```sh
-   IMESSAGE_ACCOUNT=agent@example.com \
-   IMESSAGE_ALLOW_FILE=~/.config/iterate-imessage/allow \
-     iterate provide imessage/src/imessage.ts --mind <your mind> \
-     --key ~/.config/iterate-imessage/key --paths /integrations/imessage/
+   cat > ~/.config/iterate-imessage/launcher.conf <<'EOF'
+   # the mind's address, as for iterate login
+   MIND=example.com
+   # the agent's own address or addresses, comma-separated
+   IMESSAGE_ACCOUNT=agent@example.com
+   EOF
+   chmod 600 ~/.config/iterate-imessage/launcher.conf
    ```
 
-   `--key` and `--paths` give the lend a key of its own. The first run prints a link to the mind's
-   own page: open it, sign in, and press Allow, once. Later runs connect with no sign-in. The key
-   may lend `itx.imessage` and add events under `/integrations/imessage/`, and nothing else in the
-   mind. Whoever can read the key file is the lend: keep it at mode 600 and out of any repository.
-   A member removes the key on the mind's `/keys` page. Without `--key` and `--paths`, the lend
-   uses your own sign-in and acts as you.
+   `IMESSAGE_ACCOUNT` is the address people write to the agent at, as Messages shows it under
+   Settings → iMessage ("You can be reached for messages at"): the dedicated Apple ID's email, or
+   its phone number with the country code. An account that is reached at several addresses takes
+   them all, with commas between them. Never put the owner's personal address here.
 
-6. **Allow Automation, once.** The first `send` makes macOS ask whether the program may control
-   Messages. Run the sample call above from the mind while you are at the Mac's screen, and press
-   OK. Later, the permission is under System Settings → Privacy & Security → Automation. If the
-   prompt was dismissed, `send` fails with "Not authorized to send Apple events": turn it on
-   there.
-7. **Check the Integrations page**, as [below](#on-the-integrations-page).
+   The file holds these two keys, each once, and nothing else: any other line stops the launcher.
+   A value has no spaces or quotes and does not start with `-`. The file must be yours and
+   writable by nobody else (mode 600). The launcher reads it at each start.
 
-Stop with Ctrl-C.
-
-| Variable              | What it sets                                                                         | Default                                                |
-| --------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| `IMESSAGE_ACCOUNT`    | Required. The agent's own address or addresses: only messages written to them count. | none: the lend does not start                          |
-| `IMESSAGE_ALLOW_FILE` | The file of listed handles and `group:` lines, one a line.                           | none                                                   |
-| `IMESSAGE_STATE_FILE` | A file that keeps the start point across restarts ([below](#keep-it-running)).       | none: each start begins from now                       |
-| `IMESSAGE_SEND_DIR`   | The folder a file waits in while Messages sends it.                                  | `~/Library/Messages/Attachments/iterate-imessage-send` |
-| `IMESSAGE_DB`         | The Messages database.                                                               | `~/Library/Messages/chat.db`                           |
-
-### Keep it running
-
-`iterate provide` reconnects by itself, but gives up after about five minutes without the mind.
-Two ways restart it. Use one of them.
-
-| Way                     | Use it when                                     | What restarts the lend                   |
-| ----------------------- | ----------------------------------------------- | ---------------------------------------- |
-| A loop in a terminal    | You are trying the lend out.                    | The loop, while the terminal stays open. |
-| A `launchd` LaunchAgent | The lend must run unattended, as on a Mac mini. | macOS, after each exit and each login.   |
-
-**A loop.** Export the variables in the shell first, then:
-
-```sh
-while true; do iterate provide imessage/src/imessage.ts --mind <your mind> --key … --paths …; sleep 15; done
-```
-
-**A LaunchAgent.** `launchd` is the macOS service manager. A LaunchAgent is a job that `launchd`
-runs for one user while that user is logged in. Messages needs the user's session, so the lend is
-a LaunchAgent, not a system daemon. This repository installs nothing: the steps are the owner's.
-
-1. Find the two programs the job runs. `launchd` gives a job no shell profile, so the job names
-   each program by its full path:
+4. **Build and install the launcher**, from this repository's folder:
 
    ```sh
-   realpath "$(which node)"   # the node binary, for example /opt/homebrew/Cellar/node/24.1.0/bin/node
-   which iterate              # the iterate CLI, for example /opt/homebrew/bin/iterate
+   imessage/launcher/install.sh --dry-run   # prints what it would write
+   imessage/launcher/install.sh
    ```
 
-2. Grant Full Disk Access to that `node` binary: System Settings → Privacy & Security → Full Disk
-   Access → `+`, then press Cmd-Shift-G and paste the path from step 1. Under `launchd` no
-   terminal app runs the lend, so the terminal's own grant does not count. Grant it again after
-   a Node upgrade that changes the path.
-3. Write `~/Library/LaunchAgents/com.example.iterate-imessage.plist`. Replace each path, the
-   address and the mind with your own. Keep the file out of any repository.
+   It compiles [launcher/launcher.c](launcher/launcher.c) with three full paths fixed inside: `node`,
+   the `iterate` CLI, and this checkout's `imessage/src/imessage.ts`. It signs the app (ad hoc),
+   installs `~/Applications/iterate-imessage.app`, and writes the LaunchAgent
+   `~/Library/LaunchAgents/local.iterate-imessage.plist` from
+   [launcher/local.iterate-imessage.plist](launcher/local.iterate-imessage.plist). It never uses
+   `sudo`, loads no job and changes no privacy setting. `NODE=/path/to/node` and
+   `ITERATE=/path/to/iterate.js` before the command choose other programs.
 
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0">
-   <dict>
-     <key>Label</key>
-     <string>com.example.iterate-imessage</string>
-     <key>ProgramArguments</key>
-     <array>
-       <string>/opt/homebrew/Cellar/node/24.1.0/bin/node</string>
-       <string>/opt/homebrew/bin/iterate</string>
-       <string>provide</string>
-       <string>imessage/src/imessage.ts</string>
-       <string>--mind</string>
-       <string>example.com</string>
-       <string>--key</string>
-       <string>/Users/sam/.config/iterate-imessage/key</string>
-       <string>--paths</string>
-       <string>/integrations/imessage/</string>
-     </array>
-     <key>WorkingDirectory</key>
-     <string>/Users/sam/iterategrations</string>
-     <key>EnvironmentVariables</key>
-     <dict>
-       <key>IMESSAGE_ACCOUNT</key>
-       <string>agent@example.com</string>
-       <key>IMESSAGE_ALLOW_FILE</key>
-       <string>/Users/sam/.config/iterate-imessage/allow</string>
-       <key>IMESSAGE_STATE_FILE</key>
-       <string>/Users/sam/.config/iterate-imessage/state.json</string>
-       <key>PATH</key>
-       <string>/opt/homebrew/bin:/usr/bin:/bin</string>
-     </dict>
-     <key>RunAtLoad</key>
-     <true/>
-     <key>KeepAlive</key>
-     <true/>
-     <key>ThrottleInterval</key>
-     <integer>15</integer>
-     <key>ProcessType</key>
-     <string>Background</string>
-     <key>StandardOutPath</key>
-     <string>/Users/sam/Library/Logs/iterate-imessage.log</string>
-     <key>StandardErrorPath</key>
-     <string>/Users/sam/Library/Logs/iterate-imessage.log</string>
-   </dict>
-   </plist>
-   ```
+   Use a checkout that is there only for the lend, not one that you or an agent works in: the
+   launcher runs that checkout's `imessage.ts` with Full Disk Access.
 
-   `KeepAlive` makes `launchd` start the program again each time it exits, and `ThrottleInterval`
-   makes it wait 15 seconds first: together they are the loop above. `RunAtLoad` starts it at
-   login.
-
-4. Run the lend once in a terminal with `--key` (step 5 of the setup) before the first load, so
-   that the key is already allowed. The job cannot open the sign-in link.
-5. Load the job, and read its output:
+5. **Grant Full Disk Access to the launcher alone.** In System Settings → Privacy & Security →
+   Full Disk Access, press `+`, press Cmd-Shift-G, paste `~/Applications/iterate-imessage.app`,
+   press Open, and turn it on. Then, in the same list, select each terminal app that you tried the
+   lend from, and any `node` entry that an earlier setup added, and press `−`. Quit and reopen
+   that terminal: its windows keep the old access until then.
+6. **Start it**, and read its output:
 
    ```sh
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.iterate-imessage.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.iterate-imessage.plist
    tail -f ~/Library/Logs/iterate-imessage.log
    ```
 
-   `launchctl bootout gui/$(id -u)/com.example.iterate-imessage` stops and unloads it.
+   The lend uses a key of its own, `~/.config/iterate-imessage/key`. On the first start with a
+   new key, the log prints a link to the mind's own page: open it, sign in, and press Allow, once.
+   The lend waits for it. Later starts connect with no sign-in. The key may lend `itx.imessage`
+   and add events under `/integrations/imessage/`, and nothing else in the mind. Whoever can read
+   the key file is the lend: keep it at mode 600 and out of any repository. A member removes the
+   key on the mind's `/keys` page.
 
-6. Allow Automation for the job, once: the first `send` under `launchd` makes macOS ask whether
-   `node` may control Messages. Be at the Mac's screen for it (step 6 of the setup).
-7. Check the Integrations page, as [below](#on-the-integrations-page).
+   If the log says that macOS refused to open `chat.db`, no grant covers this build of the
+   launcher: do step 5 again.
+
+7. **Allow Automation, once.** The first `send` makes macOS ask whether `iterate-imessage` may
+   control Messages. Run the sample call above from the mind while you are at the Mac's screen,
+   and press OK. Later, the permission is under System Settings → Privacy & Security →
+   Automation. If the prompt was dismissed, `send` fails with "Not authorized to send Apple
+   events": turn it on there.
+8. **Check the Integrations page**, as [below](#on-the-integrations-page).
+
+The launcher starts the lend as one fixed command, with only these variables set:
+
+```text
+<node> <iterate CLI> provide <checkout>/imessage/src/imessage.ts --mind <MIND>
+  --key ~/.config/iterate-imessage/key --paths /integrations/imessage/
+```
+
+| Variable              | What it sets                                                                         | Under the launcher                                            |
+| --------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `IMESSAGE_ACCOUNT`    | Required. The agent's own address or addresses: only messages written to them count. | `IMESSAGE_ACCOUNT` from `launcher.conf`                       |
+| `IMESSAGE_ALLOW_FILE` | The file of listed handles and `group:` lines, one a line.                           | `~/.config/iterate-imessage/allow`                            |
+| `IMESSAGE_STATE_FILE` | A file that keeps the start point across restarts ([below](#keep-it-running)).       | `~/.config/iterate-imessage/state.json`                       |
+| `IMESSAGE_SEND_DIR`   | The folder a file waits in while Messages sends it.                                  | unset: `~/Library/Messages/Attachments/iterate-imessage-send` |
+| `IMESSAGE_DB`         | The Messages database.                                                               | unset: `~/Library/Messages/chat.db`                           |
+
+The launcher passes on nothing else from its own environment, so `NODE_OPTIONS` and similar
+variables never reach the lend. It also sets `HOME`, `USER`, `LOGNAME`, `TMPDIR` and
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`, and runs from `~/.config/iterate-imessage`.
+
+### How the launcher keeps Full Disk Access to itself
+
+macOS grants Full Disk Access to an app, and everything that app starts shares it. The launcher is
+an app whose only child is this lend, so the grant reaches the lend and nothing else.
+
+```text
+launchd ──starts──▶ iterate-imessage.app      holds Full Disk Access; the responsible process
+                      └─spawns─▶ node … provide imessage.ts     charged to the launcher
+                                   └─runs─▶ /usr/bin/osascript    charged to the launcher
+
+Terminal, node in a terminal, coding agents    no Full Disk Access
+```
+
+The parts:
+
+- **TCC** (Transparency, Consent, and Control) is the macOS service that decides whether a
+  process may read protected data such as `chat.db`.
+- **The responsible process** is the process that TCC charges an access to. A program started from
+  a terminal is charged to the terminal; a child of an app is charged to the app; a LaunchAgent is
+  charged to itself.
+- **`launchd`** is the macOS service manager. A **LaunchAgent** is a job that `launchd` runs for
+  one user while that user is logged in. Messages needs the user's session, so the lend is a
+  LaunchAgent, not a system daemon.
+- **The launcher** is `iterate-imessage.app`, built by `install.sh` from `launcher.c`.
+
+What happens:
+
+1. At login, `launchd` starts the launcher. It is its own responsible process.
+2. The launcher refuses any argument. It reads `launcher.conf`, builds the lend's environment from
+   nothing, and spawns `node` with the fixed arguments above. No shell runs between them.
+3. When the lend opens `chat.db`, TCC charges the access to the launcher, finds its grant, and
+   allows it. The same holds for `osascript`, so the Automation permission is the launcher's too.
+4. The launcher waits for the lend and passes on `launchd`'s stop. It never replaces itself with
+   `node` (`exec`): the process would then carry `node`'s identity, and the grant would have to be
+   `node`'s.
+5. TCC knows the launcher by its code signature. The ad-hoc signature's requirement is the hash of
+   this build (`codesign -d -r- ~/Applications/iterate-imessage.app` shows
+   `designated => cdhash H"…"`), so the grant covers this build alone. A change to `launcher.c` or
+   to a path fixed inside it makes a new build, which no grant covers until you grant again. The
+   same inputs make the same build: `install.sh` then says "up to date" and the grant stays.
+6. The app has the hardened runtime, so `DYLD_*` variables cannot load other code into it, and an
+   edited LaunchAgent cannot hand it arguments or `NODE_OPTIONS`.
+
+What it does not stop: the launcher runs `node`, the `iterate` CLI and the checkout's
+`imessage.ts` from where they are, and your macOS user can change those files. A program running as
+you could edit them, and the edit would run with the grant at the next start. That is why the
+checkout is the lend's alone (step 4). The grant keeps the terminal and agents from reading
+protected data themselves; it does not make your own files tamper-proof.
+
+### Keep it running
+
+`launchd` starts the launcher at login (`RunAtLoad`) and again 15 seconds after each exit
+(`KeepAlive`, `ThrottleInterval`). `iterate provide` reconnects by itself, but gives up after
+about five minutes without the mind; `launchd` then starts it again. No terminal window is needed.
+
+| To                                                     | Run                                                                                    |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Restart it, after a change to the allow-list or config | `launchctl kickstart -k gui/$(id -u)/local.iterate-imessage`                           |
+| Stop it until the next login                           | `launchctl bootout gui/$(id -u)/local.iterate-imessage`                                |
+| Start it again                                         | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.iterate-imessage.plist` |
+| Read its output                                        | `tail -f ~/Library/Logs/iterate-imessage.log`                                          |
 
 The log can hold private text ([Logs](#good-to-know)): keep it out of backups you share.
 
-**The start point across restarts.** Without `IMESSAGE_STATE_FILE`, each start begins from now: a
-message that arrives while the lend is stopped is never delivered. With it, the lend keeps two
-numbers in that file (mode 600): the last message row it is done with, and the time of its very
-first start. A restart then goes on after that row.
+**After an update.** A change to `imessage.ts`, or a Node or `iterate` upgrade that keeps their
+paths, needs only a restart. Run `install.sh` again after a change to `launcher.c`, or when `node`
+or the `iterate` CLI moves. When it says `installed` or `updated`, the build is new: grant Full
+Disk Access again (step 5, removing the old entry first), then restart it.
+
+**The start point across restarts.** The launcher sets `IMESSAGE_STATE_FILE`, so the lend keeps
+two numbers in `~/.config/iterate-imessage/state.json` (mode 600): the last message row it is done
+with, and the time of its very first start. A restart then goes on after that row. Without a state
+file, each start would begin from now, and a message that arrived while the lend was stopped would
+never be delivered.
 
 | Case                                                       | With a state file                                 |
 | ---------------------------------------------------------- | ------------------------------------------------- |
@@ -325,13 +344,24 @@ async (itx) => (await itx.rewriteRules.list()).find((rule) => rule.match === "it
 ```
 
 A rule whose target is `itx.builtins.rpcStubs.get('imessage')` is the live lend, with its
-`description`. No rule: the bridge is not connected, so read its output.
+`description`. No rule: the bridge is not connected, so read its log
+(`~/Library/Logs/iterate-imessage.log`).
 
 ### Take it away
 
-Stop the program: the rule and the card go with it. Remove the key on the mind's `/keys` page and
-delete the key file and the allow-list. The events it appended stay on
-`/integrations/imessage/primary`. Then run the check above: it must answer nothing.
+From this repository's folder:
+
+```sh
+imessage/launcher/uninstall.sh --dry-run   # prints what it would stop and remove
+imessage/launcher/uninstall.sh
+```
+
+It stops the LaunchAgent and removes it and `iterate-imessage.app`; the rule and the card go with
+the lend. Then, in System Settings → Privacy & Security, remove `iterate-imessage` under Full Disk
+Access and turn it off under Automation. Remove the key on the mind's `/keys` page and delete
+`~/.config/iterate-imessage` (the key, the allow-list, `launcher.conf` and the state file). The
+events it appended stay on `/integrations/imessage/primary`. Then run the check above: it must
+answer nothing.
 
 ## Good to know
 
@@ -385,4 +415,6 @@ delete the key file and the allow-list. The events it appended stay on
 - **Logs.** Queue and account-filter notices contain counts. Errors include text returned by
   SQLite, the mind or `osascript`; treat that output as potentially private.
 - **The tests** (`vp test` in this folder) run over a scratch SQLite database with made-up rows and
-  a pretend `osascript`. They never open the real Messages database and never send.
+  a pretend `osascript`. They never open the real Messages database and never send. The
+  launcher's tests compile `launcher.c` with a scratch home folder and a pretend `node`; they
+  build no app and touch neither `launchd` nor the privacy settings.
