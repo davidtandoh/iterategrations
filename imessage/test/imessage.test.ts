@@ -89,7 +89,8 @@ function scratchMessages(options: { wal?: boolean; withoutDestination?: boolean 
     );
     CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
     CREATE TABLE chat (
-      ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, chat_identifier TEXT
+      ROWID INTEGER PRIMARY KEY AUTOINCREMENT, guid TEXT UNIQUE NOT NULL, chat_identifier TEXT,
+      service_name TEXT
     );
   `);
   // where Messages keeps received files, and a folder beside it that is not Messages'
@@ -101,10 +102,10 @@ function scratchMessages(options: { wal?: boolean; withoutDestination?: boolean 
     path,
     dir,
     /** a group chat as Messages keeps it, under the id its AppleScript takes */
-    chat: (identifier: string, guid = `iMessage;+;${identifier}`) =>
+    chat: (identifier: string, guid = `iMessage;+;${identifier}`, service = "iMessage") =>
       void db
-        .prepare("INSERT INTO chat (guid, chat_identifier) VALUES (?, ?)")
-        .run(guid, identifier),
+        .prepare("INSERT INTO chat (guid, chat_identifier, service_name) VALUES (?, ?, ?)")
+        .run(guid, identifier, service),
     /** one more row, as Messages would write it; answers its guid */
     arrive: (message: Message): string => {
       let handle = handles.get(message.from);
@@ -649,7 +650,7 @@ test("a group Messages names with 32 hex digits is listed, read and written to l
     [guid, HEX_GROUP],
   );
   await assert.rejects(lent.send!(HEX_GROUP, "hello"), /no such group chat/);
-  messages.chat(HEX_GROUP, `SMS;+;${HEX_GROUP}`);
+  messages.chat(HEX_GROUP, `SMS;+;${HEX_GROUP}`, "SMS");
   await assert.rejects(lent.send!(HEX_GROUP, "hello"), /no such group chat/);
   messages.chat(HEX_GROUP);
   assert.deepEqual(await lent.send!(HEX_GROUP, "hello"), { sent: true, to: HEX_GROUP });
@@ -748,9 +749,40 @@ test("send to a listed group that Messages does not have, or keeps under a stran
   assert.equal(ran.length, 0);
 });
 
+test("a group chat whose service is SMS is refused, whatever stands in front of its chat id", async () => {
+  const { messages, lent, ran } = await started({
+    list: `${SAM}\ngroup:${GROUP}\ngroup:${HEX_GROUP}`,
+  });
+  // an SMS group can carry the same any;+; id: the chat's service decides, not the id's prefix
+  messages.chat(GROUP, `any;+;${GROUP}`, "SMS");
+  await assert.rejects(lent.send!(GROUP, "hello"), /no such group chat/);
+  messages.chat(HEX_GROUP, `iMessage;+;${HEX_GROUP}`, "SMS");
+  await assert.rejects(lent.send!(HEX_GROUP, "hello"), /no such group chat/);
+  assert.deepEqual(ran, []);
+});
+
+test("send to a group under any;+; reaches AppleScript with the id as Messages wrote it", async () => {
+  const { messages, lent, ran } = await started({
+    list: `${SAM}\ngroup:${GROUP}\ngroup:${HEX_GROUP}\ngroup:${OTHER_GROUP}`,
+  });
+  messages.chat(GROUP, `any;+;${GROUP}`);
+  messages.chat(HEX_GROUP, `any;+;${HEX_GROUP}`);
+  // any other service in front, or another chat's id behind, is no group chat of this name
+  messages.chat(OTHER_GROUP, `RCS;+;${OTHER_GROUP}`);
+  assert.deepEqual(await lent.send!(GROUP, "hello"), { sent: true, to: GROUP });
+  assert.deepEqual(await lent.send!(HEX_GROUP, "hello hex"), { sent: true, to: HEX_GROUP });
+  await assert.rejects(lent.send!(OTHER_GROUP, "hello"), /no such group chat/);
+  await assert.rejects(lent.send!(`any;+;${GROUP}`, "hello"), /refuses this recipient/);
+  const script = SEND_GROUP_SCRIPT.flatMap((line) => ["-e", line]);
+  assert.deepEqual(ran, [
+    [...script, "--", `any;+;${GROUP}`, "hello"],
+    [...script, "--", `any;+;${HEX_GROUP}`, "hello hex"],
+  ]);
+});
+
 test("SMS group chats refuse text and files before fetching or sending", async () => {
   const { messages, lent, ran } = await started();
-  messages.chat(GROUP, `SMS;+;${GROUP}`);
+  messages.chat(GROUP, `SMS;+;${GROUP}`, "SMS");
   await assert.rejects(lent.send!(GROUP, "hello"), /no such group chat/);
   await assert.rejects(
     lent.send!(GROUP, "", { url: "https://example.com/file.txt" }),
