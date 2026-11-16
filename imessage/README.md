@@ -173,8 +173,9 @@ scripts and coding agents, could then read every protected file on the Mac. See
    its phone number with the country code. An account that is reached at several addresses takes
    them all, with commas between them. Never put the owner's personal address here.
 
-   The file holds these two keys, each once, and nothing else: any other line stops the launcher.
-   A value has no spaces or quotes and does not start with `-`. The file must be yours and
+   The file requires these two keys, each once. Blank lines and whole-line `#` comments are allowed;
+   other keys stop the launcher. A value is at most 512 printable ASCII characters, has no spaces,
+   quotes or backslashes, and does not start with `-`. The file must be yours and
    writable by nobody else (mode 600). The launcher reads it at each start.
 
 4. **Build and install the launcher**, from this repository's folder:
@@ -201,6 +202,12 @@ scripts and coding agents, could then read every protected file on the Mac. See
    lend from, and any `node` entry that an earlier setup added, and press `−`. Quit and reopen
    that terminal: its windows keep the old access until then.
 6. **Start it**, and read its output:
+
+   If you used the earlier Node LaunchAgent setup, first stop that job with
+   `launchctl bootout gui/$(id -u)/com.example.iterate-imessage` and remove its
+   `~/Library/LaunchAgents/com.example.iterate-imessage.plist`. Use your earlier label and file
+   name if you changed them. Stop any terminal loop from that setup too, so only the launcher
+   runs the lend.
 
    ```sh
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.iterate-imessage.plist

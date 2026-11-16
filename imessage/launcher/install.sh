@@ -1,7 +1,7 @@
 #!/bin/bash
 # install.sh — build iterate-imessage.app, the launcher that alone holds Full Disk Access for the
 # iMessage lend, and write its LaunchAgent. The owner runs it on the Mac, as themselves: it never
-# uses sudo, loads no job and changes no privacy setting. See ../README.md#run-it-in-the-background.
+# uses sudo, loads no job and changes no privacy setting. See ../README.md#set-it-up.
 #
 #   imessage/launcher/install.sh [--dry-run]
 #
