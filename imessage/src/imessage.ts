@@ -191,11 +191,10 @@ const runOsascript = (args: string[]): Promise<void> =>
 /** A text longer than this is refused: iMessage is for messages, and a runaway model stops here. */
 const TEXT_LIMIT = 10_000;
 
-/** A file larger than this is neither sent nor answered by `downloadAttachment`: iMessage's own
- *  limit for one file. */
+/** The lend's size limit for a file sent or answered by `downloadAttachment`. */
 const FILE_LIMIT = 100 * 1024 * 1024;
 
-/** `downloadAttachment` knows the attachments of this many delivered messages' files, the newest. */
+/** `downloadAttachment` retains this many of the most recently discovered attachment GUIDs. */
 const DELIVERED_LIMIT = 5_000;
 const ATTACHMENT_DISCOVERY_MS = 120_000;
 
@@ -352,8 +351,8 @@ export function createLend(input: {
   const sending = new Map<string, ReturnType<typeof setTimeout> | undefined>();
   const log = (line: string) => console.error(`iMessage: ${line}`);
 
-  /** The start point a run before this one kept, or undefined: no file, or one that is not a
-   *  start point (said so; the lend then starts from now, which delivers no history). */
+  /** The saved start point, or undefined for an unreadable or malformed file. A malformed file
+   *  logs a notice; without a saved start point, the lend starts from now. */
   const savedState = (): { rowid: bigint; since: bigint } | undefined => {
     if (!input.stateFile) return undefined;
     let text: string;
