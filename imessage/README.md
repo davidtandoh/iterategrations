@@ -79,6 +79,9 @@ it reaches the mind:
   async (itx) => await itx.imessage.send("+447700900123", "Friday works. See you at 7.");
   ```
 
+  For a group, `to` must be the event's bare chat identifier. The `group:` prefix is only
+  for allow-file entries. Group sends require an iMessage chat in Messages; SMS chats are refused.
+
   Send a file by its URL, and keep a received one, with the mind's files:
 
   ```js
@@ -341,7 +344,12 @@ delete the key file and the allow-list. The events it appended stay on
   reads the path from the database and then requires the real file to be inside
   `~/Library/Messages/Attachments`. A file that Messages has not downloaded to the Mac yet is
   "not found": ask again later. `hasAttachments: true` with `attachments: []` means Messages had
-  recorded no file one poll after the lend first saw the message.
+  not written the attachment metadata yet. The text is delivered immediately. For two minutes
+  after delivery, this run checks only those delivered messages for missing metadata. If the
+  metadata appears, the lend appends one follow-up event with the same message `guid` and its
+  attachment metadata, and makes the files downloadable. The follow-up has a separate
+  idempotency key. After two minutes, the lend silently stops checking that message. Discovery
+  is held in memory for at most 5,000 messages and does not survive a restart.
 - **Sent files.** The lend fetches the URL from the Mac, at most 100 MB, and follows a redirect
   only to another `https:` URL. It writes the bytes to a file (mode 600) in a new folder (mode 700) under `IMESSAGE_SEND_DIR`, hands Messages the path, and deletes the folder five minutes
   later, when Messages has had time to read it. A failed send deletes it at once, and each start

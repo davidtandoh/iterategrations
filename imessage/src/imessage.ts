@@ -66,10 +66,10 @@ export function handleOf(value: unknown): string | undefined {
 
 /** A group chat's identifier as Messages keeps it (`chat.chat_identifier`, and
  *  `message.cache_roomnames` on each of its messages): `chat` and letters or digits. Undefined
- *  for anything else. A leading `group:` (the allow file's line form) is taken off. */
+ *  for anything else. */
 export function groupOf(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const id = value.trim().replace(/^group:\s*/, "");
+  const id = value.trim();
   return /^chat[A-Za-z0-9]{6,64}$/.test(id) ? id : undefined;
 }
 
@@ -88,7 +88,7 @@ export function allowFile(text: string): { people: Set<string>; groups: Set<stri
   const people = new Set<string>();
   const groups = new Set<string>();
   for (const [index, entry] of entriesOf(text).entries()) {
-    const group = entry.startsWith("group:") ? groupOf(entry) : undefined;
+    const group = entry.startsWith("group:") ? groupOf(entry.slice("group:".length)) : undefined;
     const handle = entry.startsWith("group:") ? undefined : handleOf(entry);
     if (group) groups.add(group);
     else if (handle) people.add(handle);
@@ -197,6 +197,7 @@ const FILE_LIMIT = 100 * 1024 * 1024;
 
 /** `downloadAttachment` knows the attachments of this many delivered messages' files, the newest. */
 const DELIVERED_LIMIT = 5_000;
+const ATTACHMENT_DISCOVERY_MS = 120_000;
 
 /** A sent file's extension where its name has none: Messages shows a file by its extension. */
 const EXTENSIONS: Record<string, string> = {
@@ -342,7 +343,9 @@ export function createLend(input: {
   let database: DatabaseSync | undefined;
   let reader: ReturnType<typeof open> | undefined;
   /** What waits for the mind, each with its row: the state file never passes a waiting row. */
-  const pending: { rowid: bigint; event: IMessageEvent }[] = [];
+  const pending: { rowid?: bigint; event: IMessageEvent }[] = [];
+  const awaitingAttachments = new Map<bigint, { event: IMessageEvent; expires: number }>();
+  const now = input.now ?? Date.now;
   /** The attachments of delivered messages, by their guid: all that `downloadAttachment` answers. */
   const delivered = new Set<string>();
   /** The folders of files being sent, each removed by its timer. */
@@ -474,8 +477,6 @@ export function createLend(input: {
     const resumed = saved && saved.rowid <= highest() ? saved : undefined;
     const since = resumed?.since ?? appleNanoseconds((input.now ?? Date.now)());
     let cursor = resumed?.rowid ?? highest();
-    /** A row whose files Messages had not written yet, asked once more on the next poll. */
-    let awaited: bigint | undefined;
     const attachmentsOf = (rowid: bigint): IMessageAttachment[] =>
       filesOf.all(rowid).map((file) => ({
         guid: String(file.guid),
@@ -489,6 +490,7 @@ export function createLend(input: {
       }));
     return {
       since,
+      attachmentsOf,
       cursor: () => cursor,
       read: (): (Row & { files: IMessageAttachment[] })[] => {
         const upTo = highest();
@@ -501,11 +503,6 @@ export function createLend(input: {
         const read: (Row & { files: IMessageAttachment[] })[] = [];
         for (const row of rows) {
           const files = row.attachments === 1n ? attachmentsOf(row.rowid) : [];
-          if (row.attachments === 1n && files.length === 0 && awaited !== row.rowid) {
-            awaited = row.rowid;
-            cursor = row.rowid - 1n;
-            return read;
-          }
           read.push({ ...row, files });
         }
         cursor = upTo;
@@ -520,7 +517,7 @@ export function createLend(input: {
       chatId: (group: string): string | undefined => {
         const guid = chatOf.get(group)?.guid;
         return typeof guid === "string" &&
-          /^[A-Za-z]+;\+;chat[A-Za-z0-9]+$/.test(guid) &&
+          /^iMessage;\+;chat[A-Za-z0-9]+$/.test(guid) &&
           guid.endsWith(`;${group}`)
           ? guid
           : undefined;
@@ -532,7 +529,8 @@ export function createLend(input: {
    *  oldest message that still waits for the mind. */
   const keep = () => {
     if (!reader) return;
-    saveState(pending.length > 0 ? pending[0]!.rowid - 1n : reader.cursor(), reader.since);
+    const waiting = pending.find((item) => item.rowid !== undefined);
+    saveState(waiting ? waiting.rowid! - 1n : reader.cursor(), reader.since);
   };
 
   /** Append what waits, oldest first; what fails stays for the next tick or connection. */
@@ -545,6 +543,18 @@ export function createLend(input: {
           const { type, payload } = waiting.event;
           if (keyAppend) await keyAppend(LOG_PATH, { type, payload });
           else await itx!.cd(LOG_PATH).append(waiting.event);
+          if (
+            waiting.rowid !== undefined &&
+            payload.hasAttachments &&
+            payload.attachments.length === 0
+          ) {
+            awaitingAttachments.set(waiting.rowid, {
+              event: waiting.event,
+              expires: now() + ATTACHMENT_DISCOVERY_MS,
+            });
+            while (awaitingAttachments.size > DELIVERED_LIMIT)
+              awaitingAttachments.delete(awaitingAttachments.keys().next().value!);
+          }
           if (pending[0] === waiting) pending.shift();
         }
         keep();
@@ -559,6 +569,23 @@ export function createLend(input: {
 
   const tick = () => {
     try {
+      for (const [rowid, waiting] of awaitingAttachments) {
+        if (now() >= waiting.expires) {
+          awaitingAttachments.delete(rowid);
+          continue;
+        }
+        const attachments = reader!.attachmentsOf(rowid);
+        if (attachments.length === 0) continue;
+        for (const file of attachments) delivered.add(file.guid);
+        pending.push({
+          event: {
+            ...waiting.event,
+            payload: { ...waiting.event.payload, attachments },
+            idempotencyKey: `${waiting.event.idempotencyKey}:attachments`,
+          },
+        });
+        awaitingAttachments.delete(rowid);
+      }
       for (const row of reader!.read()) {
         const handle = handleOf(row.sender);
         const recipient = handleOf(row.recipient);
@@ -713,6 +740,7 @@ export function createLend(input: {
     },
     stop: () => {
       clearInterval(timer);
+      awaitingAttachments.clear();
       for (const folder of sending.keys()) removeSent(folder);
       database?.close();
     },

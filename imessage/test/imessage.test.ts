@@ -99,7 +99,7 @@ function scratchMessages(options: { wal?: boolean; withoutDestination?: boolean 
     path,
     dir,
     /** a group chat as Messages keeps it, under the id its AppleScript takes */
-    chat: (identifier: string, guid = `any;+;${identifier}`) =>
+    chat: (identifier: string, guid = `iMessage;+;${identifier}`) =>
       void db
         .prepare("INSERT INTO chat (guid, chat_identifier) VALUES (?, ?)")
         .run(guid, identifier),
@@ -152,6 +152,13 @@ function scratchMessages(options: { wal?: boolean; withoutDestination?: boolean 
       }
       return guid;
     },
+    attach: (guid: string, filename: string) => {
+      const row = db.prepare("SELECT ROWID AS rowid FROM message WHERE guid = ?").get(guid)!;
+      const attachment = db
+        .prepare("INSERT INTO attachment (guid, filename, transfer_name) VALUES (?, ?, ?)")
+        .run(`late-${guid}`, filename, "late.txt").lastInsertRowid;
+      db.prepare("INSERT INTO message_attachment_join VALUES (?, ?)").run(row.rowid!, attachment);
+    },
     close: () => {
       db.close();
       rmSync(dir, { recursive: true, force: true });
@@ -202,6 +209,7 @@ async function started(
     before?: (messages: ReturnType<typeof scratchMessages>) => void;
     osascript?: (args: string[]) => Promise<void>;
     fetch?: typeof fetch;
+    now?: () => number;
   } = {},
 ) {
   const messages = scratchMessages(options);
@@ -218,6 +226,7 @@ async function started(
     sendDir: join(messages.dir, "sending"),
     sendCleanupMs: 0,
     pollMs: 5,
+    now: options.now,
     osascript: async (args) => {
       ran.push(args);
       await options.osascript?.(args);
@@ -608,7 +617,7 @@ test("a group chat is listed with group:, and only so", () => {
     assert.throws(() => allowFile(`${SAM}\n${entry}`), /entry 2 of the allow-list/);
   // the lend's own address is never a group
   assert.throws(() => allowList(`group:${GROUP}`), /no handle/);
-  assert.equal(groupOf(`group:${GROUP}`), GROUP);
+  assert.equal(groupOf(`group:${GROUP}`), undefined);
   assert.equal(groupOf(GROUP), GROUP);
   assert.equal(groupOf(`any;+;${GROUP}`), undefined);
   assert.equal(groupOf(42), undefined);
@@ -681,16 +690,13 @@ test("send writes to a listed group by the chat id Messages keeps, and to no oth
     },
   });
   assert.deepEqual(await lent.send!(GROUP, "hello all"), { sent: true, to: GROUP });
-  assert.deepEqual(await lent.send!(`group:${GROUP}`, "again"), { sent: true, to: GROUP });
+  await assert.rejects(lent.send!(`group:${GROUP}`, "again"), /refuses this recipient/);
   const script = SEND_GROUP_SCRIPT.flatMap((line) => ["-e", line]);
-  assert.deepEqual(ran, [
-    [...script, "--", `any;+;${GROUP}`, "hello all"],
-    [...script, "--", `any;+;${GROUP}`, "again"],
-  ]);
+  assert.deepEqual(ran, [[...script, "--", `iMessage;+;${GROUP}`, "hello all"]]);
   assert.ok(SEND_GROUP_SCRIPT.includes("send theText to chat id theRecipient"));
   for (const to of [OTHER_GROUP, `group:${OTHER_GROUP}`, `any;+;${GROUP}`, `${GROUP},${SAM}`])
     await assert.rejects(lent.send!(to, "hello"), /refuses this recipient/);
-  assert.equal(ran.length, 2);
+  assert.equal(ran.length, 1);
   void messages;
 });
 
@@ -700,6 +706,18 @@ test("send to a listed group that Messages does not have, or keeps under a stran
   messages.chat(GROUP, `any;+;${GROUP}" & (do shell script "id") & "`);
   await assert.rejects(lent.send!(GROUP, "hello"), /no such group chat/);
   assert.equal(ran.length, 0);
+});
+
+test("SMS group chats refuse text and files before fetching or sending", async () => {
+  const { messages, lent, ran } = await started();
+  messages.chat(GROUP, `SMS;+;${GROUP}`);
+  await assert.rejects(lent.send!(GROUP, "hello"), /no such group chat/);
+  await assert.rejects(
+    lent.send!(GROUP, "", { url: "https://example.com/file.txt" }),
+    /no such group chat/,
+  );
+  assert.deepEqual(ran, []);
+  assert.equal(existsSync(join(messages.dir, "sending")), false);
 });
 
 /** A received file as Messages would keep it, inside its attachments folder; answers its path. */
@@ -729,6 +747,42 @@ test("a message's files are named on its event, and never by a path", async () =
   ]);
   assert.equal(mind.events[0]!.payload.hasAttachments, true);
   assert.ok(!JSON.stringify(mind.events[0]).includes(messages.dir));
+});
+
+test("late attachment rows produce one downloadable follow-up without delaying text", async () => {
+  const { messages, mind, lent } = await started();
+  const guid = messages.arrive({ from: SAM, text: "here is the file", attachments: 1 });
+  await until(() => mind.events.length === 1, "the text without its file");
+  assert.equal(mind.events[0]!.payload.text, "here is the file");
+  assert.deepEqual(mind.events[0]!.payload.attachments, []);
+  await settle();
+  messages.attach(guid, received(messages, "late.txt", "late bytes"));
+  await until(() => mind.events.length === 2, "the attachment follow-up");
+  const followUp = mind.events[1]!;
+  assert.equal(followUp.payload.guid, guid);
+  assert.deepEqual(followUp.payload.attachments, [
+    { guid: `late-${guid}`, name: "late.txt", type: null, size: null },
+  ]);
+  assert.notEqual(followUp.idempotencyKey, mind.events[0]!.idempotencyKey);
+  assert.equal(
+    ((await lent.downloadAttachment!(`late-${guid}`)) as Buffer).toString(),
+    "late bytes",
+  );
+  await settle();
+  assert.equal(mind.events.length, 2);
+});
+
+test("late attachment discovery expires silently after two minutes", async () => {
+  let now = Date.now();
+  const { messages, mind, lent } = await started({ now: () => now });
+  const guid = messages.arrive({ from: SAM, attachments: 1 });
+  await until(() => mind.events.length === 1, "the original message");
+  now += 120_001;
+  await settle();
+  messages.attach(guid, received(messages, "late.txt", "too late"));
+  await settle();
+  assert.equal(mind.events.length, 1);
+  await assert.rejects(lent.downloadAttachment!(`late-${guid}`), /refuses this attachment/);
 });
 
 test("downloadAttachment answers the bytes of a delivered message's file, and of no other", async () => {
@@ -894,7 +948,7 @@ test("a sent file waits in a private folder while Messages takes it, and is dele
   assert.deepEqual(ran, [
     [...lines(SEND_FILE_SCRIPT), "--", SAM, seen[0]!.path],
     [...lines(SEND_SCRIPT), "--", SAM, "a note"],
-    [...lines(SEND_GROUP_FILE_SCRIPT), "--", `any;+;${GROUP}`, seen[1]!.path],
+    [...lines(SEND_GROUP_FILE_SCRIPT), "--", `iMessage;+;${GROUP}`, seen[1]!.path],
   ]);
   await until(() => readdirSync(sendDir).length === 0, "the sent files are deleted");
   assert.ok(seen.every(({ path }) => !existsSync(path)));
