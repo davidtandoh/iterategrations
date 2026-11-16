@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The LaunchAgent for iterate-imessage.app. install.sh writes it to ~/Library/LaunchAgents with
+     @APP_EXECUTABLE@ and @LOG_FILE@ replaced. It runs the launcher with no arguments: the launcher
+     takes none and refuses any. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.iterate-imessage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@APP_EXECUTABLE@</string>
+  </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <string>local.iterate-imessage</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>@LOG_FILE@</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG_FILE@</string>
+</dict>
+</plist>
