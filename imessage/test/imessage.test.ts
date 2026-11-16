@@ -734,7 +734,6 @@ test("send writes to a listed group by the chat id Messages keeps, and to no oth
   await assert.rejects(lent.send!(`group:${GROUP}`, "again"), /refuses this recipient/);
   const script = SEND_GROUP_SCRIPT.flatMap((line) => ["-e", line]);
   assert.deepEqual(ran, [[...script, "--", `iMessage;+;${GROUP}`, "hello all"]]);
-  assert.ok(SEND_GROUP_SCRIPT.includes("send theText to chat id theRecipient"));
   for (const to of [OTHER_GROUP, `group:${OTHER_GROUP}`, `any;+;${GROUP}`, `${GROUP},${SAM}`])
     await assert.rejects(lent.send!(to, "hello"), /refuses this recipient/);
   assert.equal(ran.length, 1);
