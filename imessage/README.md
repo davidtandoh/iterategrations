@@ -129,17 +129,19 @@ later, and this repository.
    change. Never commit the list.
 
    To list a group chat, add a line `group:<chat identifier>`. The chat identifier is the name
-   Messages keeps for the group in its database: `chat` and a long number. The agent's account
-   must already be in the group. Look the identifier up on the Mac, from a terminal that has
+   Messages keeps for the group in its database. It has one of two forms: `chat` and a long
+   number, or 32 hex digits (`0123456789abcdef0123456789abcdef`) for a newer group. The agent's
+   account must already be in the group. Look the identifier up on the Mac, from a terminal that has
    Full Disk Access (step 4):
 
    ```sh
    sqlite3 -readonly ~/Library/Messages/chat.db \
-     "SELECT chat_identifier, display_name FROM chat WHERE chat_identifier LIKE 'chat%'"
+     "SELECT chat_identifier, display_name FROM chat WHERE style = 43"
    ```
 
    ```text
-   group:chat123456789012345678   # the Friday dinner group
+   group:chat123456789012345678             # the Friday dinner group
+   group:0123456789abcdef0123456789abcdef   # a newer group
    ```
 
    A group line lists the whole group: every member's messages in it reach the mind, also those

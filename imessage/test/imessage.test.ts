@@ -46,6 +46,8 @@ const PERSONAL = "owner@example.org";
 /** A listed group chat and one that is not, by their chat identifiers. */
 const GROUP = "chat123456789012345678";
 const OTHER_GROUP = "chat987654321098765432";
+// the form Messages gives a newer group: 32 lowercase hex digits, no `chat` in front
+const HEX_GROUP = "0123456789abcdef0123456789abcdef";
 
 type Message = {
   from: string;
@@ -210,13 +212,15 @@ async function started(
     osascript?: (args: string[]) => Promise<void>;
     fetch?: typeof fetch;
     now?: () => number;
+    /** The allow file's text, when not the usual one. */
+    list?: string;
   } = {},
 ) {
   const messages = scratchMessages(options);
   options.before?.(messages);
   const mind = pretendMind();
   const ran: string[][] = [];
-  const listed = allowFile(`${SAM}\n${ADA}\ngroup:${GROUP}`);
+  const listed = allowFile(options.list ?? `${SAM}\n${ADA}\ngroup:${GROUP}`);
   const lend = createLend({
     db: messages.path,
     allow: listed.people,
@@ -621,6 +625,43 @@ test("a group chat is listed with group:, and only so", () => {
   assert.equal(groupOf(GROUP), GROUP);
   assert.equal(groupOf(`any;+;${GROUP}`), undefined);
   assert.equal(groupOf(42), undefined);
+  // the hex form of an identifier: exactly 32 lowercase hex digits
+  assert.equal(groupOf(HEX_GROUP), HEX_GROUP);
+  assert.deepEqual([...allowFile(`group:${HEX_GROUP}`).groups], [HEX_GROUP]);
+  for (const id of [
+    HEX_GROUP.slice(1),
+    `${HEX_GROUP}0`,
+    HEX_GROUP.toUpperCase(),
+    HEX_GROUP.replace("0", "g"),
+    `group:${HEX_GROUP}`,
+    `iMessage;+;${HEX_GROUP}`,
+  ])
+    assert.equal(groupOf(id), undefined);
+  assert.throws(() => allowFile(`${SAM}\n${HEX_GROUP}`), /entry 2 of the allow-list/);
+});
+
+test("a group Messages names with 32 hex digits is listed, read and written to like any other", async () => {
+  const { messages, mind, lent, ran } = await started({ list: `${SAM}\ngroup:${HEX_GROUP}` });
+  const guid = messages.arrive({ from: SAM, text: "hello all", room: HEX_GROUP });
+  await until(() => mind.events.length === 1, "the group message");
+  assert.deepEqual(
+    [mind.events[0]!.payload.guid, mind.events[0]!.payload.group],
+    [guid, HEX_GROUP],
+  );
+  await assert.rejects(lent.send!(HEX_GROUP, "hello"), /no such group chat/);
+  messages.chat(HEX_GROUP, `SMS;+;${HEX_GROUP}`);
+  await assert.rejects(lent.send!(HEX_GROUP, "hello"), /no such group chat/);
+  messages.chat(HEX_GROUP);
+  assert.deepEqual(await lent.send!(HEX_GROUP, "hello"), { sent: true, to: HEX_GROUP });
+  await assert.rejects(lent.send!(`group:${HEX_GROUP}`, "again"), /refuses this recipient/);
+  assert.deepEqual(ran, [
+    [
+      ...SEND_GROUP_SCRIPT.flatMap((line) => ["-e", line]),
+      "--",
+      `iMessage;+;${HEX_GROUP}`,
+      "hello",
+    ],
+  ]);
 });
 
 test("a message in a listed group lands with the group and its sender; an unlisted group's never", async () => {
