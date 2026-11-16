@@ -1,21 +1,5 @@
-// imessage.ts — iMessage with a short list of people, lent to an iterate mind from the Mac that
-// Messages runs on, with `iterate provide`:
-//
-//   IMESSAGE_ACCOUNT=agent@example.com IMESSAGE_ALLOW_FILE=~/.config/iterate-imessage/allow \
-//     iterate provide imessage/src/imessage.ts --mind <address>
-//
-// The Mac's Messages store (`~/Library/Messages/chat.db`) can hold far more than the mind may see:
-// other people's conversations, and years of history. So the lend is narrow by construction:
-//   - EVENTS: a message lands on the mind's stream as `imessage/message` only when a LISTED person
-//     sent it, one to one, over iMessage, AFTER the lend started. The start point is the highest
-//     message ROWID at the start, and every query asks for rows above it and for listed senders
-//     only, so no other row's content reaches this process. A message must also have been written
-//     to the lend's own address (IMESSAGE_ACCOUNT): another account's messages can sync into the
-//     same store. The database is opened read-only.
-//   - CALLS: one function, `send(to, text)`, to a listed person. Anyone else is refused. Messages
-//     sends it, asked by `osascript`; the recipient and the text are arguments of a fixed script,
-//     never a part of its source.
-// A message's text is data from that person. The lend reads no instruction in it.
+// iMessage lent to an iterate mind with `iterate provide`.
+// Setup, account isolation and delivery limits: ../README.md.
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
