@@ -1,0 +1,14 @@
+{
+  "name": "iterate-imessage",
+  "private": true,
+  "version": "0.0.0",
+  "description": "iMessage with listed people, lent to an iterate mind from the Mac that Messages runs on with `iterate provide`",
+  "type": "module",
+  "scripts": {
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -118,6 +118,15 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  imessage:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   iphone-voice-notes:
     devDependencies:
       '@cloudflare/workers-types':

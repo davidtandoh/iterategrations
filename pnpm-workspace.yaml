@@ -11,6 +11,7 @@ packages:
   - whatsapp-calls
   - phone-calls
   - herdr
+  - imessage
   - chatgpt-desktop
   - jmap
   - telegram
